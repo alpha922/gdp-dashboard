@@ -1,79 +1,72 @@
 import requests
 import pandas as pd
 
-# All non-seasonally adjusted retail sales volume series
-RSI_SERIES = {
-    "all_retailing": "RSI",
-    "food_stores": "RSI2",
-    "non_food_stores": "RSI3",
-    "household_goods": "RSI4",
-    "clothing": "RSI5",
-    "department_stores": "RSI6",
-    "fuel": "RSI7",
-    "non_store_retailing": "RSI8",
-}
+DATASET = "https://api.beta.ons.gov.uk/v1/datasets/drsi"
 
-def fetch_rsi_series(series_id: str) -> pd.DataFrame:
-    """
-    Fetch a single RSI series from the ONS API.
-    """
-    url = f"https://api.ons.gov.uk/timeseries/{series_id}/dataset/rsi/data"
-    response = requests.get(url)
-    response.raise_for_status()
+def get_latest_version_url():
+    r = requests.get(DATASET)
+    r.raise_for_status()
+    dataset = r.json()
 
-    data = response.json()
+    edition_url = dataset["links"]["editions"][0]["href"]
 
-    # Extract monthly observations
-    observations = data["months"]
+    r = requests.get(edition_url)
+    r.raise_for_status()
+    edition = r.json()
 
-    df = pd.DataFrame(observations)
-    df["series_id"] = series_id
+    version_url = edition["links"]["latest_version"]["href"]
+    return version_url
 
+def get_retail_sectors(version_url: str):
+    r = requests.get(f"{version_url}/dimensions")
+    r.raise_for_status()
+    dims = r.json()
+
+    retail_dim = next(d for d in dims["items"] if d["name"] == "retailsector")
+
+    r = requests.get(retail_dim["links"]["options"]["href"])
+    r.raise_for_status()
+    options = r.json()
+
+    return {
+        o["label"].lower(): o["id"]
+        for o in options["items"]
+    }
+
+def fetch_series(version_url: str, sector_code: str):
+    r = requests.get(
+        f"{version_url}/observations",
+        params={
+            "time": "*",
+            "retailsector": sector_code,
+            "measure": "volume",
+            "seasonaladjustment": "nonseasonallyadjusted",
+        },
+    )
+    r.raise_for_status()
+    data = r.json()
+
+    return pd.DataFrame(
+        {
+            "month": o["dimensions"]["time"],
+            "value": o["observation"],
+            "sector": o["dimensions"]["retailsector"],
+        }
+        for o in data["observations"]
+    )
+
+def run():
+    version_url = get_latest_version_url()
+    print("Using:", version_url)
+
+    sectors = get_retail_sectors(version_url)
+
+    df = fetch_series(version_url, sectors["all retailing"])
+    df["month"] = pd.to_datetime(df["month"])
+    df["value"] = pd.to_numeric(df["value"])
+
+    print(df.head())
     return df
-
-
-def clean_rsi(df: pd.DataFrame) -> pd.DataFrame:
-    """
-    Standardise column names and convert types.
-    """
-    df = df.rename(columns={
-        "date": "month",
-        "value": "volume",
-    })
-
-    df["month"] = pd.to_datetime(df["month"], format="%Y-%m")
-    df["volume"] = pd.to_numeric(df["volume"], errors="coerce")
-
-    # Drop missing values
-    df = df.dropna(subset=["volume"])
-
-    return df
-
-
-def run_pipeline():
-    """
-    Fetch all RSI categories and combine into one DataFrame.
-    """
-    all_frames = []
-
-    for category, series_id in RSI_SERIES.items():
-        print(f"Fetching {category} ({series_id})...")
-        df_raw = fetch_rsi_series(series_id)
-        df_clean = clean_rsi(df_raw)
-        df_clean["category"] = category
-        all_frames.append(df_clean)
-
-    df_final = pd.concat(all_frames, ignore_index=True)
-
-    print("Preview of combined dataset:")
-    print(df_final.head())
-
-    # TODO: load into Supabase
-    # load_to_supabase(df_final)
-
-    return df_final
-
 
 if __name__ == "__main__":
-    run_pipeline()
-
+    run()
