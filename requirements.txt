@@ -1,2 +1,7 @@
 streamlit
 pandas
+requests
+beautifulsoup4
+openpyxl
+psycopg2-binary
+python-dotenv
