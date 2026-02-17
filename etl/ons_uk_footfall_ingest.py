@@ -4,6 +4,11 @@ import io
 import re
 import requests
 from bs4 import BeautifulSoup
+import os
+import psycopg2
+from psycopg2 import connect
+from psycopg2.extras import execute_values
+
 
 def get_latest_link():
     url = "https://www.ons.gov.uk/economy/economicoutputandproductivity/output/datasets/ukretailfootfall"
@@ -276,7 +281,7 @@ def upsert_dataframe(df: pd.DataFrame, table: str = "uk_retail_footfall"):
     """
     cols = ["period_start_dt","period_end_dt","period_type","region","site_type","footfall_index","version"]
     records = [tuple(row[c] for c in cols) for _, row in df.iterrows()]
-
+    SCHEMA = os.environ.get("SUPABASE_SCHEMA", "public")
     sql = f"""
     insert into {SCHEMA}.{table}
         ({", ".join(cols)})
